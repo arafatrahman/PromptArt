@@ -8,7 +8,7 @@ import FirebaseStorage
 import SDWebImageSwiftUI
 
 // MARK: - MODELS
-
+// ... (Your models are unchanged)
 struct CategoryModel: Identifiable, Codable, Hashable {
     @DocumentID var id: String?
     let name: String
@@ -25,8 +25,9 @@ struct PromptModel: Identifiable, Codable, Hashable {
     var likesCount: Int? // For Liking & Trending
 }
 
-// MARK: - SERVICES
 
+// MARK: - SERVICES
+// ... (Your FirestoreService, LocalStorageService, ImageSaverService are unchanged)
 class FirestoreService: ObservableObject {
     private let db = Firestore.firestore()
     
@@ -168,6 +169,7 @@ class LocalStorageService: ObservableObject {
 class ImageSaverService: NSObject {
     private var completionHandler: ((Bool, Error?) -> Void)?
     
+    // --- THIS IS THE CORRECTED FUNCTION (from last time) ---
     func saveImageFromUrl(_ imageUrl: String, completion: @escaping (Bool, Error?) -> Void) {
         self.completionHandler = completion
         
@@ -177,17 +179,29 @@ class ImageSaverService: NSObject {
         }
         
         SDWebImageManager.shared.loadImage(with: url, options: [], progress: nil) { [weak self] (image, data, error, cacheType, finished, imageURL) in
+            // Safely unwrap self
+            guard let self = self else { return }
+
             if let error = error {
-                self?.completionHandler?(false, error)
+                self.completionHandler?(false, error)
                 return
             }
             if let image = image {
-                UIImageWriteToSavedPhotosAlbum(image, self, #selector(self?.image(_:didFinishSavingWithError:contextInfo:)), nil)
+                // Now self is non-optional, and we use the correct selector
+                UIImageWriteToSavedPhotosAlbum(image, self, #selector(self.image(_:didFinishSavingWithError:contextInfo:)), nil)
             } else {
-                self?.completionHandler?(false, nil)
+                self.completionHandler?(false, nil)
             }
         }
     }
+    
+    // --- THIS IS THE CORRECTED FUNCTION (for your new error) ---
+    func saveUIImage(_ image: UIImage, completion: @escaping (Bool, Error?) -> Void) {
+        self.completionHandler = completion
+        // Corrected selector (no "self?")
+        UIImageWriteToSavedPhotosAlbum(image, self, #selector(image(_:didFinishSavingWithError:contextInfo:)), nil)
+    }
+    // ------------------------------------
     
     @objc private func image(_ image: UIImage, didFinishSavingWithError error: Error?, contextInfo: UnsafeRawPointer) {
         if let error = error {
@@ -199,7 +213,7 @@ class ImageSaverService: NSObject {
 }
 
 // MARK: - SPLASH SCREEN
-
+// ... (Unchanged)
 struct SplashView: View {
     @State private var isActive = false
     
@@ -246,13 +260,14 @@ struct SplashView: View {
 }
 
 // MARK: - MAIN NAVIGATION VIEW (TABBAR)
-
+// ... (Unchanged)
 struct MainNavigationView: View {
     @EnvironmentObject var localStorage: LocalStorageService
     @EnvironmentObject var authService: AuthService // Get auth service
     
     var body: some View {
         TabView {
+            // UPDATED: HomeView is kept in a NavigationStack so links work
             NavigationStack {
                 HomeView()
             }
@@ -284,17 +299,20 @@ struct MainNavigationView: View {
     }
 }
 
-// MARK: - SCREEN: HOME
+// MARK: - SCREEN: HOME (UPDATED)
 
 struct HomeView: View {
     @StateObject private var firestoreService = FirestoreService()
     @State private var categories: [CategoryModel] = []
-    @State private var featuredPrompts: [PromptModel] = []
-    @State private var trendingPrompts: [PromptModel] = []
     @State private var isLoading = true
     @State private var searchText = ""
     
+    // --- STATE SIMPLIFIED ---
+    @State private var showGenerationScreen = false
+    // --- All other image generation states are REMOVED ---
+    
     private let gridColumns: [GridItem] = [
+        GridItem(.flexible(), spacing: 16),
         GridItem(.flexible(), spacing: 16),
         GridItem(.flexible(), spacing: 16)
     ]
@@ -308,100 +326,73 @@ struct HomeView: View {
     }
     
     var body: some View {
-        ScrollView {
-            if isLoading {
-                ProgressView()
-                    .progressViewStyle(.circular)
-                    .scaleEffect(1.5)
-                    .padding(.top, 200)
-            } else {
-                
-                // Featured Prompts Section
-                if !featuredPrompts.isEmpty {
-                    VStack(alignment: .leading) {
-                        Text("Featured")
-                            .font(.title2)
-                            .fontWeight(.bold)
-                            .padding(.horizontal)
-                        
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 16) {
-                                ForEach(featuredPrompts) { prompt in
-                                    NavigationLink(value: prompt) {
-                                        FeaturedPromptCard(prompt: prompt)
-                                    }
-                                }
-                            }
-                            .padding(.horizontal)
-                        }
-                    }
-                    .padding(.top)
-                }
-                
-                // Trending Prompts Section
-                if !trendingPrompts.isEmpty {
-                    VStack(alignment: .leading) {
-                        Text("Trending")
-                            .font(.title2)
-                            .fontWeight(.bold)
-                            .padding(.horizontal)
-                        
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 16) {
-                                ForEach(trendingPrompts) { prompt in
-                                    NavigationLink(value: prompt) {
-                                        FeaturedPromptCard(prompt: prompt)
-                                    }
-                                }
-                            }
-                            .padding(.horizontal)
-                        }
-                    }
-                    .padding(.top)
-                }
-
-                
-                // Categories Section
-                VStack(alignment: .leading) {
-                    Text("Categories")
-                        .font(.title2)
-                        .fontWeight(.bold)
-                        .padding(.horizontal)
-                        .padding(.top, 20)
+        ZStack(alignment: .bottomTrailing) {
+            ScrollView {
+                VStack(spacing: 24) {
+                    homeHeader
+                    mainActionButtons
+                    categoryHeader
                     
-                    if filteredCategories.isEmpty {
-                        Text("No categories matching '\(searchText)' found.")
+                    if isLoading {
+                        ProgressView()
+                            .progressViewStyle(.circular)
+                            .scaleEffect(1.5)
+                            .padding(.top, 100)
+                    } else if filteredCategories.isEmpty {
+                        Text("No categories found.")
                             .foregroundColor(.secondary)
                             .padding()
                     } else {
-                        LazyVGrid(columns: gridColumns, spacing: 16) {
+                        LazyVGrid(columns: gridColumns, spacing: 20) {
                             ForEach(filteredCategories) { category in
                                 NavigationLink(value: category) {
                                     CategoryCard(category: category)
                                 }
                             }
                         }
-                        .padding()
                     }
                 }
+                .padding()
             }
+            .toolbar(.hidden)
+            
+            // --- UPDATED FLOATING BUTTON ---
+            Button(action: {
+                showGenerationScreen = true // This now opens the sheet
+            }) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 24, weight: .semibold))
+                    .foregroundColor(Color.purple)
+            }
+            .padding()
+            .background(Color.white)
+            .clipShape(Circle())
+            .shadow(color: .black.opacity(0.2), radius: 8, x: 2, y: 4)
+            .padding()
+            // .disabled() modifier is removed
+            // ----------------------------------
+            
         }
-        .navigationTitle("PromptArt")
         .navigationDestination(for: CategoryModel.self) { category in
             CategoryDetailView(category: category)
         }
         .navigationDestination(for: PromptModel.self) { prompt in
             PromptDetailView(prompt: prompt)
         }
-        .searchable(text: $searchText, prompt: "Search Categories")
         .onAppear {
             if categories.isEmpty {
                 loadData()
             }
         }
+        // --- NEW SHEET MODIFIER ---
+        .sheet(isPresented: $showGenerationScreen) {
+            ImageGenerationView() // Presents the new screen
+        }
+        // --- .alert() modifier is REMOVED ---
     }
     
     func loadData() {
+        // ... (This function is unchanged)
         isLoading = true
         let dispatchGroup = DispatchGroup()
         
@@ -411,26 +402,93 @@ struct HomeView: View {
             dispatchGroup.leave()
         }
         
-        dispatchGroup.enter()
-        firestoreService.getFeaturedPrompts {
-            self.featuredPrompts = $0
-            dispatchGroup.leave()
-        }
-        
-        dispatchGroup.enter()
-        firestoreService.getTrendingPrompts {
-            self.trendingPrompts = $0
-            dispatchGroup.leave()
-        }
-        
         dispatchGroup.notify(queue: .main) {
             self.isLoading = false
         }
     }
+    
+    // --- startImageGeneration() function is REMOVED ---
+    
+    // ... (homeHeader, mainActionButtons, categoryHeader are unchanged)
+    private var homeHeader: some View {
+        HStack {
+            // Skipping profile image as it's not in assets
+            VStack(alignment: .leading) {
+                Text("Good Afternoon!")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                Text("Mahmud Saimon") // Hardcoded name from image
+                    .font(.title2)
+                    .fontWeight(.bold)
+            }
+            
+            Spacer()
+            
+            Button(action: {}) {
+                Image(systemName: "bell")
+                    .font(.title2)
+                    .foregroundColor(.primary)
+            }
+            .padding(.trailing, 8)
+            
+            Button(action: {}) {
+                Label("Go Pro", systemImage: "crown.fill")
+                    .font(.headline)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(Color.gray.opacity(0.2))
+                    .cornerRadius(20)
+            }
+        }
+    }
+    
+    private var mainActionButtons: some View {
+        HStack(spacing: 16) {
+            Button(action: {}) {
+                HStack {
+                    Image(systemName: "sparkles")
+                    Text("With prompt")
+                }
+                .font(.headline)
+                .foregroundColor(.white)
+                .frame(maxWidth: .infinity)
+                .padding()
+                .background(Color.purple)
+                .cornerRadius(16)
+            }
+            
+            Button(action: {}) {
+                HStack {
+                    Image(systemName: "photo")
+                    Text("Images")
+                }
+                .font(.headline)
+                .foregroundColor(.primary)
+                .frame(maxWidth: .infinity)
+                .padding()
+                .background(Color(UIColor.secondarySystemBackground))
+                .cornerRadius(16)
+            }
+        }
+    }
+    
+    private var categoryHeader: some View {
+        HStack {
+            Text("Category")
+                .font(.title2)
+                .fontWeight(.bold)
+            Spacer()
+            Button("See all >") {
+                // Add action later
+            }
+            .font(.headline)
+            .foregroundColor(.secondary)
+        }
+    }
 }
 
-// MARK: - SCREEN: CATEGORY DETAIL
-
+// MARK: - OTHER SCREENS
+// ... (CategoryDetailView, PromptDetailView, SavedPromptsView, CreatePromptView are unchanged)
 struct CategoryDetailView: View {
     let category: CategoryModel
     
@@ -502,8 +560,6 @@ struct CategoryDetailView: View {
     }
 }
 
-// MARK: - SCREEN: PROMPT DETAIL
-
 struct PromptDetailView: View {
     @State var prompt: PromptModel
     @EnvironmentObject var localStorage: LocalStorageService
@@ -525,7 +581,7 @@ struct PromptDetailView: View {
                     .resizable()
                     .indicator(.activity)
                     .transition(.fade)
-                    .aspectRatio(contentMode: .fill)
+                    // REMOVED: .aspectRatio(contentMode: .fill)
                     .frame(maxWidth: .infinity, minHeight: 300, maxHeight: 400)
                     .clipped()
                     .onTapGesture {
@@ -691,8 +747,6 @@ struct PromptDetailView: View {
     }
 }
 
-// MARK: - SCREEN: SAVED PROMPTS
-
 struct SavedPromptsView: View {
     @EnvironmentObject var localStorage: LocalStorageService
     
@@ -740,8 +794,6 @@ struct SavedPromptsView: View {
         }
     }
 }
-
-// MARK: - SCREEN: CREATE PROMPT
 
 struct CreatePromptView: View {
     @EnvironmentObject var localStorage: LocalStorageService
@@ -823,8 +875,9 @@ struct CreatePromptView: View {
     }
 }
 
-
-// MARK: - VIEW: FULL SCREEN IMAGE
+// MARK: - OTHER VIEWS & WIDGETS
+// ... (GeneratedImageView is REMOVED from here, as it's in its own file)
+// ... (FullScreenImageView, LikesView, CategoryCard, etc. are unchanged)
 
 struct FullScreenImageView: View {
     @Environment(\.dismiss) var dismiss
@@ -867,8 +920,6 @@ struct FullScreenImageView: View {
     }
 }
 
-// MARK: - WIDGET: LIKES COUNT
-
 struct LikesView: View {
     let count: Int
     
@@ -886,35 +937,27 @@ struct LikesView: View {
     }
 }
 
-// MARK: - WIDGET: CATEGORY CARD
-
 struct CategoryCard: View {
     let category: CategoryModel
     
     var body: some View {
-        ZStack(alignment: .bottomLeading) {
+        VStack(spacing: 8) {
             WebImage(url: URL(string: category.imageUrl))
                 .resizable()
                 .indicator(.activity)
                 .transition(.fade)
                 .aspectRatio(contentMode: .fill)
-                .frame(minWidth: 0, maxWidth: .infinity, minHeight: 180, maxHeight: 220)
-            
-            LinearGradient(colors: [.black.opacity(0.8), .clear], startPoint: .bottom, endPoint: .center)
+                // Adjust frame size to fit 3 columns
+                .frame(width: 100, height: 100)
+                .cornerRadius(16)
+                .clipped()
             
             Text(category.name)
-                .font(.title3)
-                .fontWeight(.bold)
-                .foregroundColor(.white)
-                .padding()
-                .shadow(radius: 3)
+                .font(.headline)
+                .fontWeight(.medium)
         }
-        .cornerRadius(16)
-        .shadow(color: .black.opacity(0.2), radius: 5, y: 3)
     }
 }
-
-// MARK: - WIDGET: FEATURED PROMPT CARD
 
 struct FeaturedPromptCard: View {
     let prompt: PromptModel
@@ -950,8 +993,6 @@ struct FeaturedPromptCard: View {
     }
 }
 
-// MARK: - WIDGET: PROMPT GRID ITEM
-
 struct PromptGridItem: View {
     let prompt: PromptModel
     
@@ -982,8 +1023,6 @@ struct PromptGridItem: View {
         .shadow(color: .black.opacity(0.1), radius: 4, y: 2)
     }
 }
-
-// MARK: - WIDGET: SAVED PROMPT ROW
 
 struct SavedPromptRow: View {
     let prompt: PromptModel

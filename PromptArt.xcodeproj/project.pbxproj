@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		703F18542EC2485A00D56ADA /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = 703F18532EC2485A00D56ADA /* FirebaseAuth */; };
+		703F18692EC2683000D56ADA /* GoogleGenerativeAI in Frameworks */ = {isa = PBXBuildFile; productRef = 703F18682EC2683000D56ADA /* GoogleGenerativeAI */; };
 		70437EF02EC161A7005B6130 /* FirebaseCore in Frameworks */ = {isa = PBXBuildFile; productRef = 70437EEF2EC161A7005B6130 /* FirebaseCore */; };
 		70437EF22EC161A7005B6130 /* FirebaseFirestore in Frameworks */ = {isa = PBXBuildFile; productRef = 70437EF12EC161A7005B6130 /* FirebaseFirestore */; };
 		70437EF42EC161A7005B6130 /* FirebaseStorage in Frameworks */ = {isa = PBXBuildFile; productRef = 70437EF32EC161A7005B6130 /* FirebaseStorage */; };
@@ -37,9 +38,22 @@
 		70437EDB2EC16079005B6130 /* PromptArtUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PromptArtUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		703F18642EC25DE700D56ADA /* Exceptions for "PromptArt" folder in "PromptArt" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 70437EC32EC16078005B6130 /* PromptArt */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		70437EC62EC16078005B6130 /* PromptArt */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				703F18642EC25DE700D56ADA /* Exceptions for "PromptArt" folder in "PromptArt" target */,
+			);
 			path = PromptArt;
 			sourceTree = "<group>";
 		};
@@ -63,6 +77,7 @@
 				70437EF72EC161CC005B6130 /* SDWebImageSwiftUI in Frameworks */,
 				703F18542EC2485A00D56ADA /* FirebaseAuth in Frameworks */,
 				70437EF02EC161A7005B6130 /* FirebaseCore in Frameworks */,
+				703F18692EC2683000D56ADA /* GoogleGenerativeAI in Frameworks */,
 				70437EF22EC161A7005B6130 /* FirebaseFirestore in Frameworks */,
 				70437EF42EC161A7005B6130 /* FirebaseStorage in Frameworks */,
 			);
@@ -138,6 +153,7 @@
 				70437EF32EC161A7005B6130 /* FirebaseStorage */,
 				70437EF62EC161CC005B6130 /* SDWebImageSwiftUI */,
 				703F18532EC2485A00D56ADA /* FirebaseAuth */,
+				703F18682EC2683000D56ADA /* GoogleGenerativeAI */,
 			);
 			productName = PromptArt;
 			productReference = 70437EC42EC16078005B6130 /* PromptArt.app */;
@@ -224,6 +240,7 @@
 			packageReferences = (
 				70437EEE2EC161A7005B6130 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */,
 				70437EF52EC161CC005B6130 /* XCRemoteSwiftPackageReference "SDWebImageSwiftUI" */,
+				703F18672EC2683000D56ADA /* XCRemoteSwiftPackageReference "generative-ai-swift" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 70437EC52EC16078005B6130 /* Products */;
@@ -430,6 +447,7 @@
 				DEVELOPMENT_TEAM = N74D443G5Y;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = PromptArt/Info.plist;
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "We need access to your photo library to save your creations.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -463,6 +481,7 @@
 				DEVELOPMENT_TEAM = N74D443G5Y;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = PromptArt/Info.plist;
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "We need access to your photo library to save your creations.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -612,6 +631,14 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+		703F18672EC2683000D56ADA /* XCRemoteSwiftPackageReference "generative-ai-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/google/generative-ai-swift.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.5.6;
+			};
+		};
 		70437EEE2EC161A7005B6130 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/firebase/firebase-ios-sdk.git";
@@ -635,6 +662,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 70437EEE2EC161A7005B6130 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
 			productName = FirebaseAuth;
+		};
+		703F18682EC2683000D56ADA /* GoogleGenerativeAI */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 703F18672EC2683000D56ADA /* XCRemoteSwiftPackageReference "generative-ai-swift" */;
+			productName = GoogleGenerativeAI;
 		};
 		70437EEF2EC161A7005B6130 /* FirebaseCore */ = {
 			isa = XCSwiftPackageProductDependency;
