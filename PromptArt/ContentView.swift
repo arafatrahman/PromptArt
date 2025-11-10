@@ -57,6 +57,7 @@ struct PromptModel: Identifiable, Codable, Hashable {
     let title: String
     let promptText: String
     let imageUrl: String
+    let isFeatured: Bool? // NEW: Added for featured prompts
 }
 
 // MARK: - SERVICES
@@ -90,6 +91,28 @@ class FirestoreService: ObservableObject {
         db.collection("categories").document(categoryId).collection("prompts").getDocuments { snapshot, error in
             if let error = error {
                 print("Error fetching prompts: \(error.localizedDescription)")
+                completion([])
+                return
+            }
+            
+            guard let documents = snapshot?.documents else {
+                completion([])
+                return
+            }
+            
+            let prompts = documents.compactMap { doc -> PromptModel? in
+                try? doc.data(as: PromptModel.self)
+            }
+            completion(prompts)
+        }
+    }
+    
+    // NEW: Fetch all prompts marked as "isFeatured"
+    func getFeaturedPrompts(completion: @escaping ([PromptModel]) -> Void) {
+        // This query scans all "prompts" collections across all "categories"
+        db.collectionGroup("prompts").whereField("isFeatured", isEqualTo: true).getDocuments { snapshot, error in
+            if let error = error {
+                print("Error fetching featured prompts: \(error.localizedDescription)")
                 completion([])
                 return
             }
@@ -254,13 +277,21 @@ struct MainNavigationView: View {
                 Label("Home", systemImage: "house.fill")
             }
             
+            // NEW: Create Tab
+            NavigationStack {
+                CreatePromptView()
+            }
+            .tabItem {
+                Label("Create", systemImage: "plus.square.fill")
+            }
+            
             NavigationStack {
                 SavedPromptsView()
             }
             .tabItem {
                 Label("Saved", systemImage: "bookmark.fill")
             }
-            // The .onAppear modifier is gone
+            // **FIXED** Removed the .onAppear that was causing bugs
         }
     }
 }
@@ -270,13 +301,24 @@ struct MainNavigationView: View {
 struct HomeView: View {
     @StateObject private var firestoreService = FirestoreService()
     @State private var categories: [CategoryModel] = []
+    @State private var featuredPrompts: [PromptModel] = [] // NEW: For featured
     @State private var isLoading = true
+    @State private var searchText = "" // NEW: For search
     
     // Define a 2-column grid layout
     private let gridColumns: [GridItem] = [
         GridItem(.flexible(), spacing: 16),
         GridItem(.flexible(), spacing: 16)
     ]
+    
+    // NEW: Computed property for search
+    var filteredCategories: [CategoryModel] {
+        if searchText.isEmpty {
+            return categories
+        } else {
+            return categories.filter { $0.name.localizedCaseInsensitiveContains(searchText) }
+        }
+    }
     
     var body: some View {
         ScrollView {
@@ -285,25 +327,63 @@ struct HomeView: View {
                     .progressViewStyle(.circular)
                     .scaleEffect(1.5)
                     .padding(.top, 200)
-            } else if categories.isEmpty {
-                Text("No categories found.")
-                    .foregroundColor(.secondary)
-                    .padding(.top, 200)
             } else {
-                LazyVGrid(columns: gridColumns, spacing: 16) {
-                    ForEach(categories) { category in
-                        NavigationLink(value: category) {
-                            CategoryCard(category: category)
+                
+                // NEW: Featured Prompts Section
+                if !featuredPrompts.isEmpty {
+                    VStack(alignment: .leading) {
+                        Text("Featured")
+                            .font(.title2)
+                            .fontWeight(.bold)
+                            .padding(.horizontal)
+                        
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 16) {
+                                ForEach(featuredPrompts) { prompt in
+                                    NavigationLink(value: prompt) {
+                                        FeaturedPromptCard(prompt: prompt)
+                                    }
+                                }
+                            }
+                            .padding(.horizontal)
                         }
                     }
+                    .padding(.top)
                 }
-                .padding()
+                
+                // Categories Section
+                VStack(alignment: .leading) {
+                    Text("Categories")
+                        .font(.title2)
+                        .fontWeight(.bold)
+                        .padding(.horizontal)
+                        .padding(.top, 20)
+                    
+                    if filteredCategories.isEmpty {
+                        Text("No categories matching '\(searchText)' found.")
+                            .foregroundColor(.secondary)
+                            .padding()
+                    } else {
+                        LazyVGrid(columns: gridColumns, spacing: 16) {
+                            ForEach(filteredCategories) { category in
+                                NavigationLink(value: category) {
+                                    CategoryCard(category: category)
+                                }
+                            }
+                        }
+                        .padding()
+                    }
+                }
             }
         }
         .navigationTitle("PromptArt")
         .navigationDestination(for: CategoryModel.self) { category in
             CategoryDetailView(category: category)
         }
+        .navigationDestination(for: PromptModel.self) { prompt in
+            PromptDetailView(prompt: prompt) // Add this for featured links
+        }
+        .searchable(text: $searchText, prompt: "Search Categories") // NEW: Search bar
         .onAppear {
             if categories.isEmpty { // Only load once
                 loadData()
@@ -313,8 +393,23 @@ struct HomeView: View {
     
     func loadData() {
         isLoading = true
+        
+        let dispatchGroup = DispatchGroup()
+        
+        dispatchGroup.enter()
         firestoreService.getCategories { fetchedCategories in
             self.categories = fetchedCategories
+            dispatchGroup.leave()
+        }
+        
+        // NEW: Load featured prompts
+        dispatchGroup.enter()
+        firestoreService.getFeaturedPrompts { fetchedPrompts in
+            self.featuredPrompts = fetchedPrompts
+            dispatchGroup.leave()
+        }
+        
+        dispatchGroup.notify(queue: .main) {
             self.isLoading = false
         }
     }
@@ -328,12 +423,22 @@ struct CategoryDetailView: View {
     @StateObject private var firestoreService = FirestoreService()
     @State private var prompts: [PromptModel] = []
     @State private var isLoading = true
+    @State private var searchText = "" // NEW: For search
     
     // Define a 2-column grid layout
     private let gridColumns: [GridItem] = [
         GridItem(.flexible(), spacing: 12),
         GridItem(.flexible(), spacing: 12)
     ]
+    
+    // NEW: Computed property for search
+    var filteredPrompts: [PromptModel] {
+        if searchText.isEmpty {
+            return prompts
+        } else {
+            return prompts.filter { $0.title.localizedCaseInsensitiveContains(searchText) }
+        }
+    }
     
     var body: some View {
         ScrollView {
@@ -344,9 +449,13 @@ struct CategoryDetailView: View {
                 Text("No prompts found in this category.")
                     .foregroundColor(.secondary)
                     .padding(.top, 200)
+            } else if filteredPrompts.isEmpty {
+                Text("No prompts matching '\(searchText)' found.")
+                    .foregroundColor(.secondary)
+                    .padding()
             } else {
                 LazyVGrid(columns: gridColumns, spacing: 12) {
-                    ForEach(prompts) { prompt in
+                    ForEach(filteredPrompts) { prompt in // Use filtered list
                         NavigationLink(value: prompt) {
                             PromptGridItem(prompt: prompt)
                         }
@@ -359,6 +468,7 @@ struct CategoryDetailView: View {
         .navigationDestination(for: PromptModel.self) { prompt in
             PromptDetailView(prompt: prompt)
         }
+        .searchable(text: $searchText, prompt: "Search Prompts") // NEW: Search bar
         .onAppear {
             if prompts.isEmpty { // Only load once
                 loadData()
@@ -390,6 +500,7 @@ struct PromptDetailView: View {
     @State private var isSavingImage = false
     @State private var showSaveConfirmation = false
     @State private var saveConfirmationMessage = ""
+    @State private var showingFullScreenImage = false // NEW: For full-screen
     
     private let imageSaver = ImageSaverService()
     
@@ -404,6 +515,9 @@ struct PromptDetailView: View {
                     .aspectRatio(contentMode: .fill)
                     .frame(maxWidth: .infinity, minHeight: 300, maxHeight: 400)
                     .clipped()
+                    .onTapGesture {
+                        showingFullScreenImage = true // NEW: Show full-screen
+                    }
                 
                 // Prompt Text Section
                 VStack(alignment: .leading, spacing: 12) {
@@ -491,6 +605,10 @@ struct PromptDetailView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .padding(.top, 10)
         )
+        // NEW: Full-screen image sheet
+        .sheet(isPresented: $showingFullScreenImage) {
+            FullScreenImageView(imageUrl: prompt.imageUrl)
+        }
     }
     
     func showConfirmation(_ message: String) {
@@ -557,7 +675,7 @@ struct SavedPromptsView: View {
                         .font(.title2)
                         .fontWeight(.bold)
                         .padding(.top)
-                    Text("Tap the bookmark icon on a prompt to save it here.")
+                    Text("Tap the bookmark icon on a prompt to save it here, or create your own.")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
@@ -588,6 +706,139 @@ struct SavedPromptsView: View {
         }
     }
 }
+
+// MARK: - NEW SCREEN: CREATE PROMPT
+
+struct CreatePromptView: View {
+    @EnvironmentObject var localStorage: LocalStorageService
+    @Environment(\.displayScale) var displayScale // For image
+    
+    @State private var title = ""
+    @State private var promptText = ""
+    @State private var showSaveConfirmation = false
+    
+    // A default placeholder image for user-created prompts
+    private let defaultImageUrl = "https://firebasestorage.googleapis.com/v0/b/promptartapp.appspot.com/o/placeholders%2Fuser_prompt.png?alt=media&token=c1a3b4d5-e6f7-8901-2345-6789abcdef12"
+
+    var body: some View {
+        Form {
+            Section(header: Text("Prompt Details")) {
+                TextField("Title", text: $title)
+                
+                VStack(alignment: .leading) {
+                    Text("Prompt Text")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    TextEditor(text: $promptText)
+                        .frame(minHeight: 200)
+                        .padding(4)
+                        .background(Color(UIColor.secondarySystemBackground))
+                        .cornerRadius(8)
+                }
+            }
+            
+            Section {
+                Button(action: saveCustomPrompt) {
+                    Label("Save Custom Prompt", systemImage: "bookmark.fill")
+                        .frame(maxWidth: .infinity, alignment: .center)
+                }
+                .disabled(title.isEmpty || promptText.isEmpty)
+            }
+        }
+        .navigationTitle("Create Prompt")
+        // Simple "Toast" confirmation
+        .overlay(
+            Group {
+                if showSaveConfirmation {
+                    Text("Prompt Saved!")
+                        .padding()
+                        .background(.ultraThickMaterial)
+                        .cornerRadius(10)
+                        .shadow(radius: 5)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                        .onAppear {
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                                withAnimation {
+                                    showSaveConfirmation = false
+                                }
+                            }
+                        }
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .padding(.top, 10)
+        )
+    }
+    
+    func saveCustomPrompt() {
+        // Create a new prompt model
+        let newPrompt = PromptModel(
+            id: UUID().uuidString, // Generate a unique local ID
+            title: title,
+            promptText: promptText,
+            imageUrl: defaultImageUrl,
+            isFeatured: false
+        )
+        
+        // Save using the local storage service
+        localStorage.savePrompt(newPrompt)
+        
+        // Show confirmation and clear fields
+        withAnimation {
+            showSaveConfirmation = true
+        }
+        title = ""
+        promptText = ""
+        
+        // Dismiss keyboard
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+    }
+}
+
+
+// MARK: - NEW VIEW: FULL SCREEN IMAGE
+
+struct FullScreenImageView: View {
+    @Environment(\.dismiss) var dismiss
+    let imageUrl: String
+    
+    @State private var scale: CGFloat = 1.0
+    @State private var lastScale: CGFloat = 1.0
+    
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            Color(UIColor.systemBackground).ignoresSafeArea()
+            
+            WebImage(url: URL(string: imageUrl))
+                .resizable()
+                .indicator(.activity)
+                .aspectRatio(contentMode: .fit)
+                .scaleEffect(scale)
+                .gesture(
+                    MagnificationGesture()
+                        .onChanged { value in
+                            let delta = value / lastScale
+                            lastScale = value
+                            scale *= delta
+                        }
+                        .onEnded { _ in
+                            lastScale = 1.0
+                            if scale < 1.0 {
+                                withAnimation { scale = 1.0 }
+                            }
+                        }
+                )
+            
+            Button(action: { dismiss() }) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.title)
+                    .foregroundColor(.secondary)
+                    .padding()
+            }
+        }
+    }
+}
+
 
 // MARK: - REUSABLE WIDGET: CATEGORY CARD
 
@@ -621,6 +872,38 @@ struct CategoryCard: View {
         }
         .cornerRadius(16)
         .shadow(color: .black.opacity(0.2), radius: 5, y: 3)
+    }
+}
+
+// MARK: - NEW WIDGET: FEATURED PROMPT CARD
+
+struct FeaturedPromptCard: View {
+    let prompt: PromptModel
+    
+    var body: some View {
+        ZStack(alignment: .bottomLeading) {
+            WebImage(url: URL(string: prompt.imageUrl))
+                .resizable()
+                .indicator(.activity)
+                .transition(.fade)
+                .aspectRatio(contentMode: .fill)
+                .frame(width: 240, height: 160)
+            
+            LinearGradient(
+                colors: [.black.opacity(0.7), .clear],
+                startPoint: .bottom,
+                endPoint: .center
+            )
+            
+            Text(prompt.title)
+                .font(.headline)
+                .fontWeight(.bold)
+                .foregroundColor(.white)
+                .padding(12)
+                .lineLimit(2)
+        }
+        .cornerRadius(12)
+        .shadow(color: .black.opacity(0.2), radius: 4, y: 2)
     }
 }
 
