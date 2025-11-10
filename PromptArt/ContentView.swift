@@ -260,10 +260,7 @@ struct MainNavigationView: View {
             .tabItem {
                 Label("Saved", systemImage: "bookmark.fill")
             }
-            .onAppear {
-                // Refresh saved prompts when tab is viewed
-                localStorage.refresh()
-            }
+            // The .onAppear modifier is gone
         }
     }
 }
