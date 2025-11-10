@@ -51,10 +51,26 @@ struct ImageGenerationView: View {
             .navigationTitle("Create Image")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                // --- Generate Button in toolbar ---
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") {
                         dismiss()
                     }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(action: {
+                        Task {
+                            await generateImage()
+                        }
+                    }) {
+                        if isGenerating {
+                            ProgressView()
+                        } else {
+                            Text("Generate")
+                                .fontWeight(.semibold)
+                        }
+                    }
+                    .disabled(!canGenerate)
                 }
             }
             .alert("Image Generation Failed", isPresented: $showErrorAlert, presenting: generationError) { error in
@@ -71,40 +87,57 @@ struct ImageGenerationView: View {
     /// The top view that displays the generated image, input image, or a placeholder.
     private var resultView: some View {
         VStack {
-            ZStack {
-                if let generatedImage, let inputImage {
-                    // --- UPDATED: The slider now sizes itself ---
-                    ImageComparisonSlider(before: inputImage, after: generatedImage)
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
+            // --- UPDATED: Wrapped in a ZStack for the save button ---
+            ZStack(alignment: .bottomTrailing) {
+                ZStack {
+                    if let generatedImage, let inputImage {
+                        // Show the slider
+                        ImageComparisonSlider(before: inputImage, after: generatedImage)
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                        
+                    } else if let inputImage {
+                        // Show just the input image
+                        Image(uiImage: inputImage)
+                            .resizable()
+                            .scaledToFit()
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                    } else {
+                        // Placeholder (this remains a fixed size)
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(Color(UIColor.secondarySystemBackground))
+                            .overlay(
+                                Image(systemName: "photo.on.rectangle.angled")
+                                    .font(.largeTitle)
+                                    .foregroundColor(.secondary)
+                            )
+                            .frame(height: 300) // Fixed height for placeholder ONLY
+                    }
                     
-                } else if let inputImage {
-                    // --- UPDATED: This view also sizes itself ---
-                    Image(uiImage: inputImage)
-                        .resizable()
-                        .scaledToFit() // <-- CHANGED
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
-                } else {
-                    // Placeholder (this remains a fixed size)
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(Color(UIColor.secondarySystemBackground))
-                        .overlay(
-                            Image(systemName: "photo.on.rectangle.angled")
-                                .font(.largeTitle)
-                                .foregroundColor(.secondary)
-                        )
-                        .frame(height: 300) // <-- Fixed height for placeholder ONLY
+                    // Show spinner when loading
+                    if isGenerating {
+                        ProgressView()
+                            .controlSize(.large)
+                            .padding()
+                            .background(.ultraThinMaterial)
+                            .clipShape(Circle())
+                    }
                 }
                 
-                // Show spinner when loading
-                if isGenerating {
-                    ProgressView()
-                        .controlSize(.large)
-                        .padding()
-                        .background(.ultraThinMaterial)
-                        .clipShape(Circle())
+                // --- NEW: Save Icon Button ---
+                if generatedImage != nil {
+                    Button(action: saveImage) {
+                        Image(systemName: "arrow.down.to.line")
+                            .font(.headline.weight(.bold))
+                            .foregroundColor(.primary)
+                            .padding(12)
+                            .background(.ultraThickMaterial)
+                            .clipShape(Circle())
+                            .shadow(radius: 4)
+                    }
+                    .padding(8) // Padding from the corner
                 }
             }
-            .padding() // --- REMOVED fixed frame
+            .padding()
             
         }
         .background(Color(UIColor.systemBackground)) // Match form background
@@ -121,16 +154,6 @@ struct ImageGenerationView: View {
             
             Section(header: Text("Input Image (Required)")) {
                 
-                // --- Small Thumbnail Display ---
-                if let inputImage {
-                    Image(uiImage: inputImage)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(height: 100) // Small preview
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                        .frame(maxWidth: .infinity, alignment: .center)
-                }
-                
                 PhotosPicker(selection: $photoItem, matching: .images, photoLibrary: .shared()) {
                     Label(inputImage == nil ? "Select Image" : "Change Image", systemImage: "photo")
                 }
@@ -145,33 +168,7 @@ struct ImageGenerationView: View {
                 }
             }
             
-            Section {
-                Button(action: {
-                    Task {
-                        await generateImage()
-                    }
-                }) {
-                    HStack(alignment: .center, spacing: 8) {
-                        Spacer()
-                        if isGenerating {
-                            ProgressView()
-                            Text("Generating...")
-                        } else {
-                            Label("Generate Image", systemImage: "sparkles")
-                        }
-                        Spacer()
-                    }
-                }
-                .disabled(!canGenerate)
-            }
-            
-            if let image = generatedImage {
-                Section(header: Text("Save")) {
-                    Button(action: saveImage) {
-                        Label("Save to Gallery", systemImage: "arrow.down.to.line")
-                    }
-                }
-            }
+            // --- REMOVED: The "Save" Section ---
         }
     }
     
@@ -215,9 +212,7 @@ struct ImageGenerationView: View {
         guard let inputImage = self.inputImage else { return }
         
         await MainActor.run {
-            // --- THIS IS THE CORRECTED LINE ---
             UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-            
             isGenerating = true
             generatedImage = nil // Clear previous result
             generationError = nil
