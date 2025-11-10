@@ -1,0 +1,683 @@
+import SwiftUI
+import Combine
+
+// Firebase & Image Loading
+import FirebaseCore
+import FirebaseFirestore
+import FirebaseStorage
+import SDWebImageSwiftUI
+
+// MARK: - APP ENTRY POINT & FIREBASE SETUP
+
+// This class handles the initial Firebase setup
+class AppDelegate: NSObject, UIApplicationDelegate {
+    func application(_ application: UIApplication,
+                     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+        FirebaseApp.configure()
+        
+        // Optional: Configure Firestore settings
+        let settings = Firestore.firestore().settings
+        settings.isPersistenceEnabled = true // Enable offline caching
+        Firestore.firestore().settings = settings
+        
+        return true
+    }
+}
+
+@main
+struct PromptArtApp: App {
+    // Register the app delegate for Firebase setup
+    @UIApplicationDelegateAdaptor(AppDelegate.self) var delegate
+    
+    // We will use this to manage our saved prompts across the app
+    @StateObject private var localStorage = LocalStorageService()
+    
+    var body: some Scene {
+        WindowGroup {
+            // Start with the SplashView
+            SplashView()
+                // Make the local storage available to all child views
+                .environmentObject(localStorage)
+                // Set preferred color schemes (optional)
+                .preferredColorScheme(.dark)
+        }
+    }
+}
+
+// MARK: - MODELS
+
+struct CategoryModel: Identifiable, Codable, Hashable {
+    @DocumentID var id: String?
+    let name: String
+    let imageUrl: String
+}
+
+struct PromptModel: Identifiable, Codable, Hashable {
+    @DocumentID var id: String?
+    let title: String
+    let promptText: String
+    let imageUrl: String
+}
+
+// MARK: - SERVICES
+
+class FirestoreService: ObservableObject {
+    private let db = Firestore.firestore()
+    
+    // Fetch all categories
+    func getCategories(completion: @escaping ([CategoryModel]) -> Void) {
+        db.collection("categories").order(by: "name").getDocuments { snapshot, error in
+            if let error = error {
+                print("Error fetching categories: \(error.localizedDescription)")
+                completion([])
+                return
+            }
+            
+            guard let documents = snapshot?.documents else {
+                completion([])
+                return
+            }
+            
+            let categories = documents.compactMap { doc -> CategoryModel? in
+                try? doc.data(as: CategoryModel.self)
+            }
+            completion(categories)
+        }
+    }
+    
+    // Fetch all prompts for a specific category
+    func getPromptsForCategory(categoryId: String, completion: @escaping ([PromptModel]) -> Void) {
+        db.collection("categories").document(categoryId).collection("prompts").getDocuments { snapshot, error in
+            if let error = error {
+                print("Error fetching prompts: \(error.localizedDescription)")
+                completion([])
+                return
+            }
+            
+            guard let documents = snapshot?.documents else {
+                completion([])
+                return
+            }
+            
+            let prompts = documents.compactMap { doc -> PromptModel? in
+                try? doc.data(as: PromptModel.self)
+            }
+            completion(prompts)
+        }
+    }
+}
+
+class LocalStorageService: ObservableObject {
+    private let savedPromptsKey = "savedPrompts"
+    @Published var savedPrompts: [PromptModel] = []
+    
+    init() {
+        loadSavedPrompts()
+    }
+    
+    private func loadSavedPrompts() {
+        guard let data = UserDefaults.standard.data(forKey: savedPromptsKey) else {
+            self.savedPrompts = []
+            return
+        }
+        
+        if let prompts = try? JSONDecoder().decode([PromptModel].self, from: data) {
+            self.savedPrompts = prompts
+        }
+    }
+    
+    private func persistPrompts() {
+        if let data = try? JSONEncoder().encode(savedPrompts) {
+            UserDefaults.standard.set(data, forKey: savedPromptsKey)
+        }
+        // Notify subscribers that the data has changed
+        objectWillChange.send()
+    }
+    
+    func savePrompt(_ prompt: PromptModel) {
+        if !isPromptSaved(prompt) {
+            savedPrompts.append(prompt)
+            persistPrompts()
+        }
+    }
+    
+    func removePrompt(_ prompt: PromptModel) {
+        savedPrompts.removeAll { $0.id == prompt.id }
+        persistPrompts()
+    }
+    
+    func isPromptSaved(_ prompt: PromptModel) -> Bool {
+        savedPrompts.contains { $0.id == prompt.id }
+    }
+    
+    func refresh() {
+        loadSavedPrompts()
+    }
+}
+
+class ImageSaverService: NSObject {
+    private var completionHandler: ((Bool, Error?) -> Void)?
+    
+    func saveImageFromUrl(_ imageUrl: String, completion: @escaping (Bool, Error?) -> Void) {
+        self.completionHandler = completion
+        
+        guard let url = URL(string: imageUrl) else {
+            completion(false, nil) // Invalid URL
+            return
+        }
+        
+        // Use SDWebImageManager to download the image
+        SDWebImageManager.shared.loadImage(with: url, options: [], progress: nil) { [weak self] (image, data, error, cacheType, finished, imageURL) in
+            if let error = error {
+                self?.completionHandler?(false, error)
+                return
+            }
+            
+            if let image = image {
+                // Save the downloaded image to the photo album
+                UIImageWriteToSavedPhotosAlbum(image, self, #selector(self?.image(_:didFinishSavingWithError:contextInfo:)), nil)
+            } else {
+                self?.completionHandler?(false, nil) // Failed to get image
+            }
+        }
+    }
+    
+    @objc private func image(_ image: UIImage, didFinishSavingWithError error: Error?, contextInfo: UnsafeRawPointer) {
+        if let error = error {
+            completionHandler?(false, error)
+        } else {
+            completionHandler?(true, nil)
+        }
+    }
+}
+
+// MARK: - SPLASH SCREEN
+
+struct SplashView: View {
+    @State private var isActive = false
+    
+    var body: some View {
+        if isActive {
+            MainNavigationView()
+        } else {
+            ZStack {
+                // Use a dark background
+                Color(UIColor.systemBackground).ignoresSafeArea()
+                
+                VStack {
+                    Spacer()
+                    Image(systemName: "palette.fill")
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 100, height: 100)
+                        .foregroundColor(Color.purple)
+                    
+                    Text("PromptArt")
+                        .font(.system(size: 36, weight: .bold, design: .rounded))
+                        .padding(.top, 10)
+                    
+                    Text("Find, Copy & Create Stunning AI Art Prompts")
+                        .font(.headline)
+                        .fontWeight(.medium)
+                        .foregroundColor(.secondary)
+                        .padding(.top, 8)
+                    
+                    Spacer()
+                    ProgressView() // Loading indicator
+                    Spacer()
+                }
+                .padding()
+            }
+            .onAppear {
+                // Wait for 2.5 seconds then navigate
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                    withAnimation {
+                        self.isActive = true
+                    }
+                }
+            }
+        }
+    }
+}
+
+// MARK: - MAIN NAVIGATION VIEW (TABBAR)
+
+struct MainNavigationView: View {
+    @EnvironmentObject var localStorage: LocalStorageService
+    
+    var body: some View {
+        TabView {
+            NavigationStack {
+                HomeView()
+            }
+            .tabItem {
+                Label("Home", systemImage: "house.fill")
+            }
+            
+            NavigationStack {
+                SavedPromptsView()
+            }
+            .tabItem {
+                Label("Saved", systemImage: "bookmark.fill")
+            }
+            .onAppear {
+                // Refresh saved prompts when tab is viewed
+                localStorage.refresh()
+            }
+        }
+    }
+}
+
+// MARK: - SCREEN: HOME
+
+struct HomeView: View {
+    @StateObject private var firestoreService = FirestoreService()
+    @State private var categories: [CategoryModel] = []
+    @State private var isLoading = true
+    
+    // Define a 2-column grid layout
+    private let gridColumns: [GridItem] = [
+        GridItem(.flexible(), spacing: 16),
+        GridItem(.flexible(), spacing: 16)
+    ]
+    
+    var body: some View {
+        ScrollView {
+            if isLoading {
+                ProgressView()
+                    .progressViewStyle(.circular)
+                    .scaleEffect(1.5)
+                    .padding(.top, 200)
+            } else if categories.isEmpty {
+                Text("No categories found.")
+                    .foregroundColor(.secondary)
+                    .padding(.top, 200)
+            } else {
+                LazyVGrid(columns: gridColumns, spacing: 16) {
+                    ForEach(categories) { category in
+                        NavigationLink(value: category) {
+                            CategoryCard(category: category)
+                        }
+                    }
+                }
+                .padding()
+            }
+        }
+        .navigationTitle("PromptArt")
+        .navigationDestination(for: CategoryModel.self) { category in
+            CategoryDetailView(category: category)
+        }
+        .onAppear {
+            if categories.isEmpty { // Only load once
+                loadData()
+            }
+        }
+    }
+    
+    func loadData() {
+        isLoading = true
+        firestoreService.getCategories { fetchedCategories in
+            self.categories = fetchedCategories
+            self.isLoading = false
+        }
+    }
+}
+
+// MARK: - SCREEN: CATEGORY DETAIL
+
+struct CategoryDetailView: View {
+    let category: CategoryModel
+    
+    @StateObject private var firestoreService = FirestoreService()
+    @State private var prompts: [PromptModel] = []
+    @State private var isLoading = true
+    
+    // Define a 2-column grid layout
+    private let gridColumns: [GridItem] = [
+        GridItem(.flexible(), spacing: 12),
+        GridItem(.flexible(), spacing: 12)
+    ]
+    
+    var body: some View {
+        ScrollView {
+            if isLoading {
+                ProgressView()
+                    .padding(.top, 200)
+            } else if prompts.isEmpty {
+                Text("No prompts found in this category.")
+                    .foregroundColor(.secondary)
+                    .padding(.top, 200)
+            } else {
+                LazyVGrid(columns: gridColumns, spacing: 12) {
+                    ForEach(prompts) { prompt in
+                        NavigationLink(value: prompt) {
+                            PromptGridItem(prompt: prompt)
+                        }
+                    }
+                }
+                .padding()
+            }
+        }
+        .navigationTitle(category.name)
+        .navigationDestination(for: PromptModel.self) { prompt in
+            PromptDetailView(prompt: prompt)
+        }
+        .onAppear {
+            if prompts.isEmpty { // Only load once
+                loadData()
+            }
+        }
+    }
+    
+    func loadData() {
+        guard let categoryId = category.id else {
+            isLoading = false
+            return
+        }
+        
+        isLoading = true
+        firestoreService.getPromptsForCategory(categoryId: categoryId) { fetchedPrompts in
+            self.prompts = fetchedPrompts
+            self.isLoading = false
+        }
+    }
+}
+
+// MARK: - SCREEN: PROMPT DETAIL
+
+struct PromptDetailView: View {
+    let prompt: PromptModel
+    @EnvironmentObject var localStorage: LocalStorageService
+    
+    @State private var isSaved: Bool = false
+    @State private var isSavingImage = false
+    @State private var showSaveConfirmation = false
+    @State private var saveConfirmationMessage = ""
+    
+    private let imageSaver = ImageSaverService()
+    
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                // Image
+                WebImage(url: URL(string: prompt.imageUrl))
+                    .resizable()
+                    .indicator(.activity)
+                    .transition(.fade)
+                    .aspectRatio(contentMode: .fill)
+                    .frame(maxWidth: .infinity, minHeight: 300, maxHeight: 400)
+                    .clipped()
+                
+                // Prompt Text Section
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Prompt")
+                        .font(.title)
+                        .fontWeight(.bold)
+                    
+                    Text(prompt.promptText)
+                        .font(.body)
+                        .lineSpacing(5)
+                        .padding()
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color(UIColor.secondarySystemBackground))
+                        .cornerRadius(12)
+                }
+                .padding()
+                
+                // Buttons
+                VStack(spacing: 12) {
+                    // Copy Prompt
+                    Button(action: copyPrompt) {
+                        Label("Copy Prompt", systemImage: "doc.on.doc")
+                            .fontWeight(.semibold)
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    
+                    // Save Image
+                    Button(action: saveImage) {
+                        if isSavingImage {
+                            ProgressView()
+                                .tint(.primary)
+                        } else {
+                            Label("Save Image to Gallery", systemImage: "arrow.down.to.line")
+                                .fontWeight(.semibold)
+                                .frame(maxWidth: .infinity)
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.large)
+                    .disabled(isSavingImage)
+                }
+                .padding(.horizontal)
+            }
+        }
+        .navigationTitle(prompt.title)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItemGroup(placement: .navigationBarTrailing) {
+                // Share Button
+                Button(action: sharePrompt) {
+                    Image(systemName: "square.and.arrow.up")
+                }
+                
+                // Save Button
+                Button(action: toggleSave) {
+                    Image(systemName: isSaved ? "bookmark.fill" : "bookmark")
+                }
+            }
+        }
+        .onAppear {
+            isSaved = localStorage.isPromptSaved(prompt)
+        }
+        // This is the simple "Toast" or "Snackbar" replacement
+        .overlay(
+            Group {
+                if showSaveConfirmation {
+                    Text(saveConfirmationMessage)
+                        .padding()
+                        .background(.ultraThickMaterial)
+                        .cornerRadius(10)
+                        .shadow(radius: 5)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                        .onAppear {
+                            // Hide after 2 seconds
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                                withAnimation {
+                                    showSaveConfirmation = false
+                                }
+                            }
+                        }
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .padding(.top, 10)
+        )
+    }
+    
+    func showConfirmation(_ message: String) {
+        saveConfirmationMessage = message
+        withAnimation {
+            showSaveConfirmation = true
+        }
+    }
+    
+    func copyPrompt() {
+        UIPasteboard.general.string = prompt.promptText
+        showConfirmation("Prompt Copied!")
+    }
+    
+    func saveImage() {
+        isSavingImage = true
+        imageSaver.saveImageFromUrl(prompt.imageUrl) { success, error in
+            if success {
+                showConfirmation("Image saved to gallery!")
+            } else {
+                showConfirmation("Error: Could not save image.")
+                print(error?.localizedDescription ?? "Unknown error")
+            }
+            isSavingImage = false
+        }
+    }
+    
+    func sharePrompt() {
+        let textToShare = "Check out this AI art prompt!\n\n\(prompt.title)\n\n\(prompt.promptText)"
+        guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+              let rootViewController = windowScene.windows.first?.rootViewController else { return }
+        
+        let activityVC = UIActivityViewController(activityItems: [textToShare], applicationActivities: nil)
+        rootViewController.present(activityVC, animated: true, completion: nil)
+    }
+    
+    func toggleSave() {
+        if isSaved {
+            localStorage.removePrompt(prompt)
+            showConfirmation("Prompt removed.")
+        } else {
+            localStorage.savePrompt(prompt)
+            showConfirmation("Prompt saved!")
+        }
+        isSaved.toggle()
+    }
+}
+
+// MARK: - SCREEN: SAVED PROMPTS
+
+struct SavedPromptsView: View {
+    @EnvironmentObject var localStorage: LocalStorageService
+    
+    var body: some View {
+        Group {
+            if localStorage.savedPrompts.isEmpty {
+                VStack {
+                    Image(systemName: "bookmark.slash")
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 80)
+                        .foregroundColor(.secondary)
+                    Text("No Saved Prompts")
+                        .font(.title2)
+                        .fontWeight(.bold)
+                        .padding(.top)
+                    Text("Tap the bookmark icon on a prompt to save it here.")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 40)
+                }
+            } else {
+                List {
+                    ForEach(localStorage.savedPrompts) { prompt in
+                        NavigationLink(value: prompt) {
+                            SavedPromptRow(prompt: prompt)
+                        }
+                    }
+                    .onDelete(perform: removePrompts)
+                }
+                .listStyle(.plain)
+            }
+        }
+        .navigationTitle("Saved Prompts")
+        .navigationDestination(for: PromptModel.self) { prompt in
+            PromptDetailView(prompt: prompt)
+        }
+    }
+    
+    func removePrompts(at offsets: IndexSet) {
+        for index in offsets {
+            let prompt = localStorage.savedPrompts[index]
+            localStorage.removePrompt(prompt)
+        }
+    }
+}
+
+// MARK: - REUSABLE WIDGET: CATEGORY CARD
+
+struct CategoryCard: View {
+    let category: CategoryModel
+    
+    var body: some View {
+        ZStack(alignment: .bottomLeading) {
+            // Background Image
+            WebImage(url: URL(string: category.imageUrl))
+                .resizable()
+                .indicator(.activity)
+                .transition(.fade)
+                .aspectRatio(contentMode: .fill)
+                .frame(minWidth: 0, maxWidth: .infinity, minHeight: 180, maxHeight: 220)
+            
+            // Gradient Overlay
+            LinearGradient(
+                colors: [.black.opacity(0.8), .clear],
+                startPoint: .bottom,
+                endPoint: .center
+            )
+            
+            // Text
+            Text(category.name)
+                .font(.title3)
+                .fontWeight(.bold)
+                .foregroundColor(.white)
+                .padding()
+                .shadow(radius: 3)
+        }
+        .cornerRadius(16)
+        .shadow(color: .black.opacity(0.2), radius: 5, y: 3)
+    }
+}
+
+// MARK: - REUSABLE WIDGET: PROMPT GRID ITEM
+
+struct PromptGridItem: View {
+    let prompt: PromptModel
+    
+    var body: some View {
+        VStack(alignment: .leading) {
+            WebImage(url: URL(string: prompt.imageUrl))
+                .resizable()
+                .indicator(.activity)
+                .transition(.fade)
+                .aspectRatio(contentMode: .fill)
+                .frame(minWidth: 0, maxWidth: .infinity)
+                .frame(height: 180) // Give a consistent starting height
+                .clipped()
+            
+            Text(prompt.title)
+                .font(.headline)
+                .lineLimit(2)
+                .padding(10)
+        }
+        .background(Color(UIColor.secondarySystemBackground))
+        .cornerRadius(12)
+        .shadow(color: .black.opacity(0.1), radius: 4, y: 2)
+    }
+}
+
+// MARK: - REUSABLE WIDGET: SAVED PROMPT ROW
+
+struct SavedPromptRow: View {
+    let prompt: PromptModel
+    
+    var body: some View {
+        HStack(spacing: 12) {
+            WebImage(url: URL(string: prompt.imageUrl))
+                .resizable()
+                .indicator(.activity)
+                .aspectRatio(contentMode: .fill)
+                .frame(width: 60, height: 60)
+                .cornerRadius(8)
+            
+            VStack(alignment: .leading, spacing: 4) {
+                Text(prompt.title)
+                    .font(.headline)
+                    .lineLimit(1)
+                Text(prompt.promptText)
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+            }
+        }
+        .padding(.vertical, 8)
+    }
+}
