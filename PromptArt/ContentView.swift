@@ -560,6 +560,8 @@ struct CategoryDetailView: View {
     }
 }
 
+// MARK: - SCREEN: PROMPT DETAIL
+
 struct PromptDetailView: View {
     @State var prompt: PromptModel
     @EnvironmentObject var localStorage: LocalStorageService
@@ -572,6 +574,9 @@ struct PromptDetailView: View {
     @State private var showingFullScreenImage = false
     @State private var isLiking = false
     
+    // --- NEW: State to show the generation screen ---
+    @State private var showGenerationScreen = false
+    
     private let imageSaver = ImageSaverService()
     
     var body: some View {
@@ -581,7 +586,6 @@ struct PromptDetailView: View {
                     .resizable()
                     .indicator(.activity)
                     .transition(.fade)
-                    // REMOVED: .aspectRatio(contentMode: .fill)
                     .frame(maxWidth: .infinity, minHeight: 300, maxHeight: 400)
                     .clipped()
                     .onTapGesture {
@@ -613,13 +617,25 @@ struct PromptDetailView: View {
                 }
                 .padding()
                 
+                // --- UPDATED: Added new "Use this Prompt" button ---
                 VStack(spacing: 12) {
+                    Button(action: {
+                        showGenerationScreen = true
+                    }) {
+                        Label("Use this Prompt", systemImage: "sparkles")
+                            .fontWeight(.semibold)
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.purple) // Match the app theme
+                    .controlSize(.large)
+                    
                     Button(action: copyPrompt) {
                         Label("Copy Prompt", systemImage: "doc.on.doc")
                             .fontWeight(.semibold)
                             .frame(maxWidth: .infinity)
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.bordered) // Changed to .bordered to make it secondary
                     .controlSize(.large)
                     
                     Button(action: saveImage) {
@@ -686,6 +702,10 @@ struct PromptDetailView: View {
         )
         .sheet(isPresented: $showingFullScreenImage) {
             FullScreenImageView(imageUrl: prompt.imageUrl)
+        }
+        // --- NEW: Sheet modifier to present the generation view ---
+        .sheet(isPresented: $showGenerationScreen) {
+            ImageGenerationView(prefilledPrompt: prompt.promptText)
         }
     }
     

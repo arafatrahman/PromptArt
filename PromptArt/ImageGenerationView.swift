@@ -5,7 +5,9 @@ import PhotosUI
 struct ImageGenerationView: View {
     @Environment(\.dismiss) var dismiss
     
-    @State private var prompt: String = ""
+    // --- UPDATED: No default value here ---
+    @State private var prompt: String
+    
     @State private var isGenerating: Bool = false
     @State private var generatedImage: UIImage?
     @State private var generationError: Error?
@@ -17,10 +19,17 @@ struct ImageGenerationView: View {
     private let imageSaver = ImageSaverService()
     @State private var showSaveConfirmation = false
     
-    // --- Check if we are ready to generate ---
     var canGenerate: Bool {
         return !prompt.isEmpty && inputImage != nil && !isGenerating
     }
+    
+    // --- NEW: Custom Initializer ---
+    // This lets us pass in a prompt, or not.
+    init(prefilledPrompt: String? = nil) {
+        // We must initialize the @State variable this special way
+        self._prompt = State(initialValue: prefilledPrompt ?? "")
+    }
+    // -------------------------------
 
     var body: some View {
         NavigationStack {
@@ -32,7 +41,6 @@ struct ImageGenerationView: View {
                             .disabled(isGenerating)
                     }
                     
-                    // --- This section is now required ---
                     Section(header: Text("Input Image (Required)")) {
                         
                         if let inputImage {
@@ -71,7 +79,6 @@ struct ImageGenerationView: View {
                                 Spacer()
                             }
                         }
-                        // --- Button is disabled if not ready ---
                         .disabled(!canGenerate)
                     }
                     
@@ -89,7 +96,6 @@ struct ImageGenerationView: View {
                     }
                 }
                 
-                // ... (Rest of the view is unchanged) ...
                 if showSaveConfirmation {
                     Text("Image Saved!")
                         .padding()
@@ -138,7 +144,6 @@ struct ImageGenerationView: View {
     }
     
     func generateImage() async {
-        // Guard against being called accidentally
         guard let inputImage = self.inputImage else { return }
         
         await MainActor.run {
@@ -149,7 +154,6 @@ struct ImageGenerationView: View {
         }
 
         print("Starting IMAGE-TO-IMAGE generation...")
-        // --- This is now the ONLY path ---
         let result = await ImageGenerationService.shared.generateImage(prompt: prompt, image: inputImage)
         
         await MainActor.run {
@@ -165,7 +169,6 @@ struct ImageGenerationView: View {
         }
     }
     
-    // Unchanged
     func saveImage() {
         guard let image = generatedImage else { return }
         
@@ -187,6 +190,7 @@ struct ImageGenerationView: View {
 
 struct ImageGenerationView_Previews: PreviewProvider {
     static var previews: some View {
-        ImageGenerationView()
+        // Preview with a pre-filled prompt
+        ImageGenerationView(prefilledPrompt: "A cat wearing a tiny hat")
     }
 }
