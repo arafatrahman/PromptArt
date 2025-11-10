@@ -32,14 +32,29 @@ struct PromptArtApp: App {
     // We will use this to manage our saved prompts across the app
     @StateObject private var localStorage = LocalStorageService()
     
+    // NEW: AppStorage for Light/Dark mode
+    @AppStorage("preferredColorScheme") private var colorSchemeString: String = "dark"
+
+    // NEW: Computed property to convert string to a ColorScheme
+    var preferredColorScheme: ColorScheme? {
+        switch colorSchemeString {
+        case "light":
+            return .light
+        case "dark":
+            return .dark
+        default:
+            return nil // System default
+        }
+    }
+    
     var body: some Scene {
         WindowGroup {
             // Start with the SplashView
             SplashView()
                 // Make the local storage available to all child views
                 .environmentObject(localStorage)
-                // Set preferred color schemes (optional)
-                .preferredColorScheme(.dark)
+                // NEW: Use the user-selected color scheme
+                .preferredColorScheme(preferredColorScheme)
         }
     }
 }
@@ -54,10 +69,12 @@ struct CategoryModel: Identifiable, Codable, Hashable {
 
 struct PromptModel: Identifiable, Codable, Hashable {
     @DocumentID var id: String?
+    var categoryId: String? // NEW: We need this to know *which* doc to update
     let title: String
     let promptText: String
     let imageUrl: String
-    let isFeatured: Bool? // NEW: Added for featured prompts
+    let isFeatured: Bool?
+    var likesCount: Int? // NEW: For Liking & Trending
 }
 
 // MARK: - SERVICES
@@ -74,14 +91,9 @@ class FirestoreService: ObservableObject {
                 return
             }
             
-            guard let documents = snapshot?.documents else {
-                completion([])
-                return
-            }
-            
-            let categories = documents.compactMap { doc -> CategoryModel? in
+            let categories = snapshot?.documents.compactMap { doc -> CategoryModel? in
                 try? doc.data(as: CategoryModel.self)
-            }
+            } ?? []
             completion(categories)
         }
     }
@@ -95,21 +107,18 @@ class FirestoreService: ObservableObject {
                 return
             }
             
-            guard let documents = snapshot?.documents else {
-                completion([])
-                return
-            }
-            
-            let prompts = documents.compactMap { doc -> PromptModel? in
-                try? doc.data(as: PromptModel.self)
-            }
+            let prompts = snapshot?.documents.compactMap { doc -> PromptModel? in
+                // NEW: We manually inject the categoryId so the model has it
+                var prompt = try? doc.data(as: PromptModel.self)
+                prompt?.categoryId = categoryId
+                return prompt
+            } ?? []
             completion(prompts)
         }
     }
     
-    // NEW: Fetch all prompts marked as "isFeatured"
+    // Fetch all prompts marked as "isFeatured"
     func getFeaturedPrompts(completion: @escaping ([PromptModel]) -> Void) {
-        // This query scans all "prompts" collections across all "categories"
         db.collectionGroup("prompts").whereField("isFeatured", isEqualTo: true).getDocuments { snapshot, error in
             if let error = error {
                 print("Error fetching featured prompts: \(error.localizedDescription)")
@@ -117,15 +126,54 @@ class FirestoreService: ObservableObject {
                 return
             }
             
-            guard let documents = snapshot?.documents else {
+            let prompts = snapshot?.documents.compactMap { doc -> PromptModel? in
+                try? doc.data(as: PromptModel.self)
+            } ?? []
+            completion(prompts)
+        }
+    }
+    
+    // NEW: Fetch top 10 most-liked prompts
+    func getTrendingPrompts(completion: @escaping ([PromptModel]) -> Void) {
+        db.collectionGroup("prompts")
+            .order(by: "likesCount", descending: true) // Order by likes
+            .limit(to: 10) // Get top 10
+            .getDocuments { snapshot, error in
+            if let error = error {
+                print("Error fetching trending prompts: \(error.localizedDescription)")
                 completion([])
                 return
             }
             
-            let prompts = documents.compactMap { doc -> PromptModel? in
+            let prompts = snapshot?.documents.compactMap { doc -> PromptModel? in
                 try? doc.data(as: PromptModel.self)
-            }
+            } ?? []
             completion(prompts)
+        }
+    }
+    
+    // NEW: Function to increment the like count in Firestore
+    func likePrompt(prompt: PromptModel, completion: @escaping (Bool) -> Void) {
+        // We need both categoryId and promptId to build the document path
+        guard let categoryId = prompt.categoryId, let promptId = prompt.id else {
+            print("Error: Prompt is missing categoryId or promptId")
+            completion(false)
+            return
+        }
+        
+        let promptRef = db.collection("categories").document(categoryId).collection("prompts").document(promptId)
+        
+        // Use FieldValue.increment to safely handle multiple users liking at once
+        promptRef.updateData([
+            "likesCount": FieldValue.increment(Int64(1))
+        ]) { error in
+            if let error = error {
+                print("Error liking prompt: \(error.localizedDescription)")
+                completion(false)
+            } else {
+                print("Prompt liked successfully!")
+                completion(true)
+            }
         }
     }
 }
@@ -153,7 +201,6 @@ class LocalStorageService: ObservableObject {
         if let data = try? JSONEncoder().encode(savedPrompts) {
             UserDefaults.standard.set(data, forKey: savedPromptsKey)
         }
-        // Notify subscribers that the data has changed
         objectWillChange.send()
     }
     
@@ -185,22 +232,19 @@ class ImageSaverService: NSObject {
         self.completionHandler = completion
         
         guard let url = URL(string: imageUrl) else {
-            completion(false, nil) // Invalid URL
+            completion(false, nil)
             return
         }
         
-        // Use SDWebImageManager to download the image
         SDWebImageManager.shared.loadImage(with: url, options: [], progress: nil) { [weak self] (image, data, error, cacheType, finished, imageURL) in
             if let error = error {
                 self?.completionHandler?(false, error)
                 return
             }
-            
             if let image = image {
-                // Save the downloaded image to the photo album
                 UIImageWriteToSavedPhotosAlbum(image, self, #selector(self?.image(_:didFinishSavingWithError:contextInfo:)), nil)
             } else {
-                self?.completionHandler?(false, nil) // Failed to get image
+                self?.completionHandler?(false, nil)
             }
         }
     }
@@ -224,7 +268,6 @@ struct SplashView: View {
             MainNavigationView()
         } else {
             ZStack {
-                // Use a dark background
                 Color(UIColor.systemBackground).ignoresSafeArea()
                 
                 VStack {
@@ -246,13 +289,12 @@ struct SplashView: View {
                         .padding(.top, 8)
                     
                     Spacer()
-                    ProgressView() // Loading indicator
+                    ProgressView()
                     Spacer()
                 }
                 .padding()
             }
             .onAppear {
-                // Wait for 2.5 seconds then navigate
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
                     withAnimation {
                         self.isActive = true
@@ -277,7 +319,6 @@ struct MainNavigationView: View {
                 Label("Home", systemImage: "house.fill")
             }
             
-            // NEW: Create Tab
             NavigationStack {
                 CreatePromptView()
             }
@@ -291,7 +332,14 @@ struct MainNavigationView: View {
             .tabItem {
                 Label("Saved", systemImage: "bookmark.fill")
             }
-            // **FIXED** Removed the .onAppear that was causing bugs
+            
+            // NEW: Settings Tab
+            NavigationStack {
+                SettingsView()
+            }
+            .tabItem {
+                Label("Settings", systemImage: "gear")
+            }
         }
     }
 }
@@ -301,17 +349,16 @@ struct MainNavigationView: View {
 struct HomeView: View {
     @StateObject private var firestoreService = FirestoreService()
     @State private var categories: [CategoryModel] = []
-    @State private var featuredPrompts: [PromptModel] = [] // NEW: For featured
+    @State private var featuredPrompts: [PromptModel] = []
+    @State private var trendingPrompts: [PromptModel] = [] // NEW: For Trending
     @State private var isLoading = true
-    @State private var searchText = "" // NEW: For search
+    @State private var searchText = ""
     
-    // Define a 2-column grid layout
     private let gridColumns: [GridItem] = [
         GridItem(.flexible(), spacing: 16),
         GridItem(.flexible(), spacing: 16)
     ]
     
-    // NEW: Computed property for search
     var filteredCategories: [CategoryModel] {
         if searchText.isEmpty {
             return categories
@@ -329,7 +376,7 @@ struct HomeView: View {
                     .padding(.top, 200)
             } else {
                 
-                // NEW: Featured Prompts Section
+                // Featured Prompts Section
                 if !featuredPrompts.isEmpty {
                     VStack(alignment: .leading) {
                         Text("Featured")
@@ -350,6 +397,29 @@ struct HomeView: View {
                     }
                     .padding(.top)
                 }
+                
+                // NEW: Trending Prompts Section
+                if !trendingPrompts.isEmpty {
+                    VStack(alignment: .leading) {
+                        Text("Trending")
+                            .font(.title2)
+                            .fontWeight(.bold)
+                            .padding(.horizontal)
+                        
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 16) {
+                                ForEach(trendingPrompts) { prompt in
+                                    NavigationLink(value: prompt) {
+                                        FeaturedPromptCard(prompt: prompt)
+                                    }
+                                }
+                            }
+                            .padding(.horizontal)
+                        }
+                    }
+                    .padding(.top)
+                }
+
                 
                 // Categories Section
                 VStack(alignment: .leading) {
@@ -381,11 +451,12 @@ struct HomeView: View {
             CategoryDetailView(category: category)
         }
         .navigationDestination(for: PromptModel.self) { prompt in
-            PromptDetailView(prompt: prompt) // Add this for featured links
+            // Must make prompt mutable to pass it down
+            PromptDetailView(prompt: prompt)
         }
-        .searchable(text: $searchText, prompt: "Search Categories") // NEW: Search bar
+        .searchable(text: $searchText, prompt: "Search Categories")
         .onAppear {
-            if categories.isEmpty { // Only load once
+            if categories.isEmpty {
                 loadData()
             }
         }
@@ -393,19 +464,24 @@ struct HomeView: View {
     
     func loadData() {
         isLoading = true
-        
         let dispatchGroup = DispatchGroup()
         
         dispatchGroup.enter()
-        firestoreService.getCategories { fetchedCategories in
-            self.categories = fetchedCategories
+        firestoreService.getCategories {
+            self.categories = $0
             dispatchGroup.leave()
         }
         
-        // NEW: Load featured prompts
         dispatchGroup.enter()
-        firestoreService.getFeaturedPrompts { fetchedPrompts in
-            self.featuredPrompts = fetchedPrompts
+        firestoreService.getFeaturedPrompts {
+            self.featuredPrompts = $0
+            dispatchGroup.leave()
+        }
+        
+        // NEW: Load trending prompts
+        dispatchGroup.enter()
+        firestoreService.getTrendingPrompts {
+            self.trendingPrompts = $0
             dispatchGroup.leave()
         }
         
@@ -423,15 +499,13 @@ struct CategoryDetailView: View {
     @StateObject private var firestoreService = FirestoreService()
     @State private var prompts: [PromptModel] = []
     @State private var isLoading = true
-    @State private var searchText = "" // NEW: For search
+    @State private var searchText = ""
     
-    // Define a 2-column grid layout
     private let gridColumns: [GridItem] = [
         GridItem(.flexible(), spacing: 12),
         GridItem(.flexible(), spacing: 12)
     ]
     
-    // NEW: Computed property for search
     var filteredPrompts: [PromptModel] {
         if searchText.isEmpty {
             return prompts
@@ -455,7 +529,7 @@ struct CategoryDetailView: View {
                     .padding()
             } else {
                 LazyVGrid(columns: gridColumns, spacing: 12) {
-                    ForEach(filteredPrompts) { prompt in // Use filtered list
+                    ForEach(filteredPrompts) { prompt in
                         NavigationLink(value: prompt) {
                             PromptGridItem(prompt: prompt)
                         }
@@ -466,11 +540,12 @@ struct CategoryDetailView: View {
         }
         .navigationTitle(category.name)
         .navigationDestination(for: PromptModel.self) { prompt in
+            // Pass the mutable prompt
             PromptDetailView(prompt: prompt)
         }
-        .searchable(text: $searchText, prompt: "Search Prompts") // NEW: Search bar
+        .searchable(text: $searchText, prompt: "Search Prompts")
         .onAppear {
-            if prompts.isEmpty { // Only load once
+            if prompts.isEmpty {
                 loadData()
             }
         }
@@ -493,14 +568,19 @@ struct CategoryDetailView: View {
 // MARK: - SCREEN: PROMPT DETAIL
 
 struct PromptDetailView: View {
-    let prompt: PromptModel
+    // NEW: Make prompt a @State var so we can update its like count
+    @State var prompt: PromptModel
     @EnvironmentObject var localStorage: LocalStorageService
+    @StateObject private var firestoreService = FirestoreService()
     
     @State private var isSaved: Bool = false
     @State private var isSavingImage = false
     @State private var showSaveConfirmation = false
     @State private var saveConfirmationMessage = ""
-    @State private var showingFullScreenImage = false // NEW: For full-screen
+    @State private var showingFullScreenImage = false
+    
+    // NEW: State for liking
+    @State private var isLiking = false
     
     private let imageSaver = ImageSaverService()
     
@@ -516,14 +596,25 @@ struct PromptDetailView: View {
                     .frame(maxWidth: .infinity, minHeight: 300, maxHeight: 400)
                     .clipped()
                     .onTapGesture {
-                        showingFullScreenImage = true // NEW: Show full-screen
+                        showingFullScreenImage = true
                     }
                 
                 // Prompt Text Section
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("Prompt")
-                        .font(.title)
-                        .fontWeight(.bold)
+                    HStack {
+                        Text("Prompt")
+                            .font(.title)
+                            .fontWeight(.bold)
+                        Spacer()
+                        // NEW: Likes count display
+                        HStack(spacing: 4) {
+                            Image(systemName: "heart.fill")
+                                .foregroundColor(.red)
+                            Text("\(prompt.likesCount ?? 0) likes")
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                        }
+                    }
                     
                     Text(prompt.promptText)
                         .font(.body)
@@ -537,7 +628,6 @@ struct PromptDetailView: View {
                 
                 // Buttons
                 VStack(spacing: 12) {
-                    // Copy Prompt
                     Button(action: copyPrompt) {
                         Label("Copy Prompt", systemImage: "doc.on.doc")
                             .fontWeight(.semibold)
@@ -546,11 +636,9 @@ struct PromptDetailView: View {
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
                     
-                    // Save Image
                     Button(action: saveImage) {
                         if isSavingImage {
-                            ProgressView()
-                                .tint(.primary)
+                            ProgressView().tint(.primary)
                         } else {
                             Label("Save Image to Gallery", systemImage: "arrow.down.to.line")
                                 .fontWeight(.semibold)
@@ -568,12 +656,20 @@ struct PromptDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItemGroup(placement: .navigationBarTrailing) {
-                // Share Button
                 Button(action: sharePrompt) {
                     Image(systemName: "square.and.arrow.up")
                 }
                 
-                // Save Button
+                // NEW: Like Button
+                Button(action: likeButtonTapped) {
+                    if isLiking {
+                        ProgressView().tint(.primary)
+                    } else {
+                        Image(systemName: "heart")
+                    }
+                }
+                .disabled(isLiking) // Disable while processing
+                
                 Button(action: toggleSave) {
                     Image(systemName: isSaved ? "bookmark.fill" : "bookmark")
                 }
@@ -582,7 +678,6 @@ struct PromptDetailView: View {
         .onAppear {
             isSaved = localStorage.isPromptSaved(prompt)
         }
-        // This is the simple "Toast" or "Snackbar" replacement
         .overlay(
             Group {
                 if showSaveConfirmation {
@@ -593,7 +688,6 @@ struct PromptDetailView: View {
                         .shadow(radius: 5)
                         .transition(.opacity.combined(with: .move(edge: .top)))
                         .onAppear {
-                            // Hide after 2 seconds
                             DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
                                 withAnimation {
                                     showSaveConfirmation = false
@@ -605,7 +699,6 @@ struct PromptDetailView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .padding(.top, 10)
         )
-        // NEW: Full-screen image sheet
         .sheet(isPresented: $showingFullScreenImage) {
             FullScreenImageView(imageUrl: prompt.imageUrl)
         }
@@ -615,6 +708,21 @@ struct PromptDetailView: View {
         saveConfirmationMessage = message
         withAnimation {
             showSaveConfirmation = true
+        }
+    }
+    
+    // NEW: Action for the like button
+    func likeButtonTapped() {
+        isLiking = true
+        firestoreService.likePrompt(prompt: prompt) { success in
+            if success {
+                // Increment the like count locally for instant UI update
+                prompt.likesCount = (prompt.likesCount ?? 0) + 1
+                showConfirmation("Prompt Liked!")
+            } else {
+                showConfirmation("Error: Could not like prompt.")
+            }
+            isLiking = false
         }
     }
     
@@ -630,7 +738,6 @@ struct PromptDetailView: View {
                 showConfirmation("Image saved to gallery!")
             } else {
                 showConfirmation("Error: Could not save image.")
-                print(error?.localizedDescription ?? "Unknown error")
             }
             isSavingImage = false
         }
@@ -707,17 +814,16 @@ struct SavedPromptsView: View {
     }
 }
 
-// MARK: - NEW SCREEN: CREATE PROMPT
+// MARK: - SCREEN: CREATE PROMPT
 
 struct CreatePromptView: View {
     @EnvironmentObject var localStorage: LocalStorageService
-    @Environment(\.displayScale) var displayScale // For image
+    @Environment(\.displayScale) var displayScale
     
     @State private var title = ""
     @State private var promptText = ""
     @State private var showSaveConfirmation = false
     
-    // A default placeholder image for user-created prompts
     private let defaultImageUrl = "https://firebasestorage.googleapis.com/v0/b/promptartapp.appspot.com/o/placeholders%2Fuser_prompt.png?alt=media&token=c1a3b4d5-e6f7-8901-2345-6789abcdef12"
 
     var body: some View {
@@ -746,7 +852,6 @@ struct CreatePromptView: View {
             }
         }
         .navigationTitle("Create Prompt")
-        // Simple "Toast" confirmation
         .overlay(
             Group {
                 if showSaveConfirmation {
@@ -771,32 +876,28 @@ struct CreatePromptView: View {
     }
     
     func saveCustomPrompt() {
-        // Create a new prompt model
         let newPrompt = PromptModel(
-            id: UUID().uuidString, // Generate a unique local ID
+            id: UUID().uuidString,
             title: title,
             promptText: promptText,
             imageUrl: defaultImageUrl,
             isFeatured: false
         )
         
-        // Save using the local storage service
         localStorage.savePrompt(newPrompt)
         
-        // Show confirmation and clear fields
         withAnimation {
             showSaveConfirmation = true
         }
         title = ""
         promptText = ""
         
-        // Dismiss keyboard
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
     }
 }
 
 
-// MARK: - NEW VIEW: FULL SCREEN IMAGE
+// MARK: - VIEW: FULL SCREEN IMAGE
 
 struct FullScreenImageView: View {
     @Environment(\.dismiss) var dismiss
@@ -839,15 +940,32 @@ struct FullScreenImageView: View {
     }
 }
 
+// MARK: - WIDGET: LIKES COUNT (NEW)
 
-// MARK: - REUSABLE WIDGET: CATEGORY CARD
+struct LikesView: View {
+    let count: Int
+    
+    var body: some View {
+        HStack(spacing: 3) {
+            Image(systemName: "heart.fill")
+                .foregroundColor(.red)
+            Text("\(count)")
+                .foregroundColor(.secondary)
+        }
+        .font(.caption.weight(.medium))
+        .padding(6)
+        .background(.ultraThinMaterial)
+        .cornerRadius(8)
+    }
+}
+
+// MARK: - WIDGET: CATEGORY CARD
 
 struct CategoryCard: View {
     let category: CategoryModel
     
     var body: some View {
         ZStack(alignment: .bottomLeading) {
-            // Background Image
             WebImage(url: URL(string: category.imageUrl))
                 .resizable()
                 .indicator(.activity)
@@ -855,14 +973,8 @@ struct CategoryCard: View {
                 .aspectRatio(contentMode: .fill)
                 .frame(minWidth: 0, maxWidth: .infinity, minHeight: 180, maxHeight: 220)
             
-            // Gradient Overlay
-            LinearGradient(
-                colors: [.black.opacity(0.8), .clear],
-                startPoint: .bottom,
-                endPoint: .center
-            )
+            LinearGradient(colors: [.black.opacity(0.8), .clear], startPoint: .bottom, endPoint: .center)
             
-            // Text
             Text(category.name)
                 .font(.title3)
                 .fontWeight(.bold)
@@ -875,7 +987,7 @@ struct CategoryCard: View {
     }
 }
 
-// MARK: - NEW WIDGET: FEATURED PROMPT CARD
+// MARK: - WIDGET: FEATURED PROMPT CARD
 
 struct FeaturedPromptCard: View {
     let prompt: PromptModel
@@ -889,39 +1001,51 @@ struct FeaturedPromptCard: View {
                 .aspectRatio(contentMode: .fill)
                 .frame(width: 240, height: 160)
             
-            LinearGradient(
-                colors: [.black.opacity(0.7), .clear],
-                startPoint: .bottom,
-                endPoint: .center
-            )
+            LinearGradient(colors: [.black.opacity(0.7), .clear], startPoint: .bottom, endPoint: .center)
             
-            Text(prompt.title)
-                .font(.headline)
-                .fontWeight(.bold)
-                .foregroundColor(.white)
-                .padding(12)
-                .lineLimit(2)
+            VStack(alignment: .leading) {
+                Text(prompt.title)
+                    .font(.headline)
+                    .fontWeight(.bold)
+                    .foregroundColor(.white)
+                    .lineLimit(2)
+                
+                // NEW: Show likes
+                if let likes = prompt.likesCount, likes > 0 {
+                    Text("\(likes) likes")
+                        .font(.caption)
+                        .foregroundColor(.white.opacity(0.8))
+                }
+            }
+            .padding(12)
         }
         .cornerRadius(12)
         .shadow(color: .black.opacity(0.2), radius: 4, y: 2)
     }
 }
 
-// MARK: - REUSABLE WIDGET: PROMPT GRID ITEM
+// MARK: - WIDGET: PROMPT GRID ITEM
 
 struct PromptGridItem: View {
     let prompt: PromptModel
     
     var body: some View {
-        VStack(alignment: .leading) {
+        VStack(alignment: .leading, spacing: 0) {
             WebImage(url: URL(string: prompt.imageUrl))
                 .resizable()
                 .indicator(.activity)
                 .transition(.fade)
                 .aspectRatio(contentMode: .fill)
                 .frame(minWidth: 0, maxWidth: .infinity)
-                .frame(height: 180) // Give a consistent starting height
+                .frame(height: 180)
                 .clipped()
+                // NEW: Overlay likes count
+                .overlay(alignment: .bottomTrailing) {
+                    if let likes = prompt.likesCount, likes > 0 {
+                        LikesView(count: likes)
+                            .padding(8)
+                    }
+                }
             
             Text(prompt.title)
                 .font(.headline)
@@ -934,7 +1058,7 @@ struct PromptGridItem: View {
     }
 }
 
-// MARK: - REUSABLE WIDGET: SAVED PROMPT ROW
+// MARK: - WIDGET: SAVED PROMPT ROW
 
 struct SavedPromptRow: View {
     let prompt: PromptModel
@@ -956,6 +1080,19 @@ struct SavedPromptRow: View {
                     .font(.subheadline)
                     .foregroundColor(.secondary)
                     .lineLimit(1)
+            }
+            
+            Spacer()
+            
+            // NEW: Show likes if they exist
+            if let likes = prompt.likesCount, likes > 0 {
+                HStack(spacing: 3) {
+                    Image(systemName: "heart.fill")
+                        .foregroundColor(.red)
+                    Text("\(likes)")
+                }
+                .font(.subheadline)
+                .foregroundColor(.secondary)
             }
         }
         .padding(.vertical, 8)
