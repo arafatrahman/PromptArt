@@ -1,6 +1,6 @@
 import SwiftUI
 
-// NEW: This enum defines the options for our picker
+// This enum defines the options for our picker
 enum ColorSchemeOption: String, CaseIterable {
     case system = "System"
     case light = "Light"
@@ -21,9 +21,11 @@ enum ColorSchemeOption: String, CaseIterable {
 
 struct SettingsView: View {
     
-    // NEW: Reads/writes the "preferredColorScheme" value from UserDefaults
-    // This must match the key used in PromptArtApp
+    // Reads/writes the "preferredColorScheme" value from UserDefaults
     @AppStorage("preferredColorScheme") private var colorSchemeString: String = "dark"
+    
+    // NEW: Get the auth service from the environment
+    @EnvironmentObject var authService: AuthService
     
     // This maps the string key to the enum case for the Picker
     private var currentScheme: ColorSchemeOption {
@@ -33,7 +35,7 @@ struct SettingsView: View {
     var body: some View {
         Form {
             Section(header: Text("Appearance")) {
-                // NEW: Picker to change the app theme
+                // Picker to change the app theme
                 Picker("Theme", selection: $colorSchemeString) {
                     ForEach(ColorSchemeOption.allCases, id: \.self) { option in
                         Text(option.rawValue).tag(option.storageKey)
@@ -46,7 +48,7 @@ struct SettingsView: View {
                 HStack {
                     Text("App Version")
                     Spacer()
-                    Text("1.1.0")
+                    Text("1.2.0") // Updated version
                         .foregroundColor(.secondary)
                 }
                 HStack {
@@ -58,10 +60,10 @@ struct SettingsView: View {
             }
             
             Section(header: Text("Account")) {
-                // This is a placeholder for when you add Firebase Auth
+                // This button now calls the real sign-out function
                 Button("Sign Out", role: .destructive) {
-                    // Add your authentication sign-out logic here
-                    print("Sign out tapped...")
+                    // NEW: Call the sign out function from the auth service
+                    authService.signOut()
                 }
             }
         }
@@ -73,6 +75,7 @@ struct SettingsView_Previews: PreviewProvider {
     static var previews: some View {
         NavigationStack {
             SettingsView()
+                .environmentObject(AuthService()) // Add a dummy service for preview
         }
     }
 }

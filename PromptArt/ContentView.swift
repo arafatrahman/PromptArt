@@ -7,58 +7,6 @@ import FirebaseFirestore
 import FirebaseStorage
 import SDWebImageSwiftUI
 
-// MARK: - APP ENTRY POINT & FIREBASE SETUP
-
-// This class handles the initial Firebase setup
-class AppDelegate: NSObject, UIApplicationDelegate {
-    func application(_ application: UIApplication,
-                     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
-        FirebaseApp.configure()
-        
-        // Optional: Configure Firestore settings
-        let settings = Firestore.firestore().settings
-        settings.isPersistenceEnabled = true // Enable offline caching
-        Firestore.firestore().settings = settings
-        
-        return true
-    }
-}
-
-@main
-struct PromptArtApp: App {
-    // Register the app delegate for Firebase setup
-    @UIApplicationDelegateAdaptor(AppDelegate.self) var delegate
-    
-    // We will use this to manage our saved prompts across the app
-    @StateObject private var localStorage = LocalStorageService()
-    
-    // NEW: AppStorage for Light/Dark mode
-    @AppStorage("preferredColorScheme") private var colorSchemeString: String = "dark"
-
-    // NEW: Computed property to convert string to a ColorScheme
-    var preferredColorScheme: ColorScheme? {
-        switch colorSchemeString {
-        case "light":
-            return .light
-        case "dark":
-            return .dark
-        default:
-            return nil // System default
-        }
-    }
-    
-    var body: some Scene {
-        WindowGroup {
-            // Start with the SplashView
-            SplashView()
-                // Make the local storage available to all child views
-                .environmentObject(localStorage)
-                // NEW: Use the user-selected color scheme
-                .preferredColorScheme(preferredColorScheme)
-        }
-    }
-}
-
 // MARK: - MODELS
 
 struct CategoryModel: Identifiable, Codable, Hashable {
@@ -69,12 +17,12 @@ struct CategoryModel: Identifiable, Codable, Hashable {
 
 struct PromptModel: Identifiable, Codable, Hashable {
     @DocumentID var id: String?
-    var categoryId: String? // NEW: We need this to know *which* doc to update
+    var categoryId: String? // We need this to know *which* doc to update
     let title: String
     let promptText: String
     let imageUrl: String
     let isFeatured: Bool?
-    var likesCount: Int? // NEW: For Liking & Trending
+    var likesCount: Int? // For Liking & Trending
 }
 
 // MARK: - SERVICES
@@ -82,7 +30,6 @@ struct PromptModel: Identifiable, Codable, Hashable {
 class FirestoreService: ObservableObject {
     private let db = Firestore.firestore()
     
-    // Fetch all categories
     func getCategories(completion: @escaping ([CategoryModel]) -> Void) {
         db.collection("categories").order(by: "name").getDocuments { snapshot, error in
             if let error = error {
@@ -98,7 +45,6 @@ class FirestoreService: ObservableObject {
         }
     }
     
-    // Fetch all prompts for a specific category
     func getPromptsForCategory(categoryId: String, completion: @escaping ([PromptModel]) -> Void) {
         db.collection("categories").document(categoryId).collection("prompts").getDocuments { snapshot, error in
             if let error = error {
@@ -108,7 +54,6 @@ class FirestoreService: ObservableObject {
             }
             
             let prompts = snapshot?.documents.compactMap { doc -> PromptModel? in
-                // NEW: We manually inject the categoryId so the model has it
                 var prompt = try? doc.data(as: PromptModel.self)
                 prompt?.categoryId = categoryId
                 return prompt
@@ -117,7 +62,6 @@ class FirestoreService: ObservableObject {
         }
     }
     
-    // Fetch all prompts marked as "isFeatured"
     func getFeaturedPrompts(completion: @escaping ([PromptModel]) -> Void) {
         db.collectionGroup("prompts").whereField("isFeatured", isEqualTo: true).getDocuments { snapshot, error in
             if let error = error {
@@ -133,11 +77,10 @@ class FirestoreService: ObservableObject {
         }
     }
     
-    // NEW: Fetch top 10 most-liked prompts
     func getTrendingPrompts(completion: @escaping ([PromptModel]) -> Void) {
         db.collectionGroup("prompts")
-            .order(by: "likesCount", descending: true) // Order by likes
-            .limit(to: 10) // Get top 10
+            .order(by: "likesCount", descending: true)
+            .limit(to: 10)
             .getDocuments { snapshot, error in
             if let error = error {
                 print("Error fetching trending prompts: \(error.localizedDescription)")
@@ -152,9 +95,7 @@ class FirestoreService: ObservableObject {
         }
     }
     
-    // NEW: Function to increment the like count in Firestore
     func likePrompt(prompt: PromptModel, completion: @escaping (Bool) -> Void) {
-        // We need both categoryId and promptId to build the document path
         guard let categoryId = prompt.categoryId, let promptId = prompt.id else {
             print("Error: Prompt is missing categoryId or promptId")
             completion(false)
@@ -163,7 +104,6 @@ class FirestoreService: ObservableObject {
         
         let promptRef = db.collection("categories").document(categoryId).collection("prompts").document(promptId)
         
-        // Use FieldValue.increment to safely handle multiple users liking at once
         promptRef.updateData([
             "likesCount": FieldValue.increment(Int64(1))
         ]) { error in
@@ -309,6 +249,7 @@ struct SplashView: View {
 
 struct MainNavigationView: View {
     @EnvironmentObject var localStorage: LocalStorageService
+    @EnvironmentObject var authService: AuthService // Get auth service
     
     var body: some View {
         TabView {
@@ -333,7 +274,6 @@ struct MainNavigationView: View {
                 Label("Saved", systemImage: "bookmark.fill")
             }
             
-            // NEW: Settings Tab
             NavigationStack {
                 SettingsView()
             }
@@ -350,7 +290,7 @@ struct HomeView: View {
     @StateObject private var firestoreService = FirestoreService()
     @State private var categories: [CategoryModel] = []
     @State private var featuredPrompts: [PromptModel] = []
-    @State private var trendingPrompts: [PromptModel] = [] // NEW: For Trending
+    @State private var trendingPrompts: [PromptModel] = []
     @State private var isLoading = true
     @State private var searchText = ""
     
@@ -398,7 +338,7 @@ struct HomeView: View {
                     .padding(.top)
                 }
                 
-                // NEW: Trending Prompts Section
+                // Trending Prompts Section
                 if !trendingPrompts.isEmpty {
                     VStack(alignment: .leading) {
                         Text("Trending")
@@ -451,7 +391,6 @@ struct HomeView: View {
             CategoryDetailView(category: category)
         }
         .navigationDestination(for: PromptModel.self) { prompt in
-            // Must make prompt mutable to pass it down
             PromptDetailView(prompt: prompt)
         }
         .searchable(text: $searchText, prompt: "Search Categories")
@@ -478,7 +417,6 @@ struct HomeView: View {
             dispatchGroup.leave()
         }
         
-        // NEW: Load trending prompts
         dispatchGroup.enter()
         firestoreService.getTrendingPrompts {
             self.trendingPrompts = $0
@@ -540,7 +478,6 @@ struct CategoryDetailView: View {
         }
         .navigationTitle(category.name)
         .navigationDestination(for: PromptModel.self) { prompt in
-            // Pass the mutable prompt
             PromptDetailView(prompt: prompt)
         }
         .searchable(text: $searchText, prompt: "Search Prompts")
@@ -568,7 +505,6 @@ struct CategoryDetailView: View {
 // MARK: - SCREEN: PROMPT DETAIL
 
 struct PromptDetailView: View {
-    // NEW: Make prompt a @State var so we can update its like count
     @State var prompt: PromptModel
     @EnvironmentObject var localStorage: LocalStorageService
     @StateObject private var firestoreService = FirestoreService()
@@ -578,8 +514,6 @@ struct PromptDetailView: View {
     @State private var showSaveConfirmation = false
     @State private var saveConfirmationMessage = ""
     @State private var showingFullScreenImage = false
-    
-    // NEW: State for liking
     @State private var isLiking = false
     
     private let imageSaver = ImageSaverService()
@@ -587,7 +521,6 @@ struct PromptDetailView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                // Image
                 WebImage(url: URL(string: prompt.imageUrl))
                     .resizable()
                     .indicator(.activity)
@@ -599,14 +532,12 @@ struct PromptDetailView: View {
                         showingFullScreenImage = true
                     }
                 
-                // Prompt Text Section
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
                         Text("Prompt")
                             .font(.title)
                             .fontWeight(.bold)
                         Spacer()
-                        // NEW: Likes count display
                         HStack(spacing: 4) {
                             Image(systemName: "heart.fill")
                                 .foregroundColor(.red)
@@ -626,7 +557,6 @@ struct PromptDetailView: View {
                 }
                 .padding()
                 
-                // Buttons
                 VStack(spacing: 12) {
                     Button(action: copyPrompt) {
                         Label("Copy Prompt", systemImage: "doc.on.doc")
@@ -660,7 +590,6 @@ struct PromptDetailView: View {
                     Image(systemName: "square.and.arrow.up")
                 }
                 
-                // NEW: Like Button
                 Button(action: likeButtonTapped) {
                     if isLiking {
                         ProgressView().tint(.primary)
@@ -668,7 +597,7 @@ struct PromptDetailView: View {
                         Image(systemName: "heart")
                     }
                 }
-                .disabled(isLiking) // Disable while processing
+                .disabled(isLiking)
                 
                 Button(action: toggleSave) {
                     Image(systemName: isSaved ? "bookmark.fill" : "bookmark")
@@ -711,12 +640,10 @@ struct PromptDetailView: View {
         }
     }
     
-    // NEW: Action for the like button
     func likeButtonTapped() {
         isLiking = true
         firestoreService.likePrompt(prompt: prompt) { success in
             if success {
-                // Increment the like count locally for instant UI update
                 prompt.likesCount = (prompt.likesCount ?? 0) + 1
                 showConfirmation("Prompt Liked!")
             } else {
@@ -940,7 +867,7 @@ struct FullScreenImageView: View {
     }
 }
 
-// MARK: - WIDGET: LIKES COUNT (NEW)
+// MARK: - WIDGET: LIKES COUNT
 
 struct LikesView: View {
     let count: Int
@@ -1010,7 +937,6 @@ struct FeaturedPromptCard: View {
                     .foregroundColor(.white)
                     .lineLimit(2)
                 
-                // NEW: Show likes
                 if let likes = prompt.likesCount, likes > 0 {
                     Text("\(likes) likes")
                         .font(.caption)
@@ -1039,7 +965,6 @@ struct PromptGridItem: View {
                 .frame(minWidth: 0, maxWidth: .infinity)
                 .frame(height: 180)
                 .clipped()
-                // NEW: Overlay likes count
                 .overlay(alignment: .bottomTrailing) {
                     if let likes = prompt.likesCount, likes > 0 {
                         LikesView(count: likes)
@@ -1084,7 +1009,6 @@ struct SavedPromptRow: View {
             
             Spacer()
             
-            // NEW: Show likes if they exist
             if let likes = prompt.likesCount, likes > 0 {
                 HStack(spacing: 3) {
                     Image(systemName: "heart.fill")

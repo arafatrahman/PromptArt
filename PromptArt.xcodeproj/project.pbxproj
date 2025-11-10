@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		703F18542EC2485A00D56ADA /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = 703F18532EC2485A00D56ADA /* FirebaseAuth */; };
 		70437EF02EC161A7005B6130 /* FirebaseCore in Frameworks */ = {isa = PBXBuildFile; productRef = 70437EEF2EC161A7005B6130 /* FirebaseCore */; };
 		70437EF22EC161A7005B6130 /* FirebaseFirestore in Frameworks */ = {isa = PBXBuildFile; productRef = 70437EF12EC161A7005B6130 /* FirebaseFirestore */; };
 		70437EF42EC161A7005B6130 /* FirebaseStorage in Frameworks */ = {isa = PBXBuildFile; productRef = 70437EF32EC161A7005B6130 /* FirebaseStorage */; };
@@ -60,6 +61,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				70437EF72EC161CC005B6130 /* SDWebImageSwiftUI in Frameworks */,
+				703F18542EC2485A00D56ADA /* FirebaseAuth in Frameworks */,
 				70437EF02EC161A7005B6130 /* FirebaseCore in Frameworks */,
 				70437EF22EC161A7005B6130 /* FirebaseFirestore in Frameworks */,
 				70437EF42EC161A7005B6130 /* FirebaseStorage in Frameworks */,
@@ -83,12 +85,20 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		703F18522EC2485A00D56ADA /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
 		70437EBB2EC16078005B6130 = {
 			isa = PBXGroup;
 			children = (
 				70437EC62EC16078005B6130 /* PromptArt */,
 				70437ED42EC16079005B6130 /* PromptArtTests */,
 				70437EDE2EC16079005B6130 /* PromptArtUITests */,
+				703F18522EC2485A00D56ADA /* Frameworks */,
 				70437EC52EC16078005B6130 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -127,6 +137,7 @@
 				70437EF12EC161A7005B6130 /* FirebaseFirestore */,
 				70437EF32EC161A7005B6130 /* FirebaseStorage */,
 				70437EF62EC161CC005B6130 /* SDWebImageSwiftUI */,
+				703F18532EC2485A00D56ADA /* FirebaseAuth */,
 			);
 			productName = PromptArt;
 			productReference = 70437EC42EC16078005B6130 /* PromptArt.app */;
@@ -620,6 +631,11 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		703F18532EC2485A00D56ADA /* FirebaseAuth */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 70437EEE2EC161A7005B6130 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseAuth;
+		};
 		70437EEF2EC161A7005B6130 /* FirebaseCore */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 70437EEE2EC161A7005B6130 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
